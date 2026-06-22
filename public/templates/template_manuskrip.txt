@@ -1,0 +1,15 @@
+# EduJournal Manuscript Writing Template
+
+Use this template to write your research paper for EduJournal SMP/SMA.
+
+## Sections:
+1. Title (Judul)
+2. Author Name & Class (Nama Siswa & Kelas)
+3. School Name (Nama Sekolah/Institusi)
+4. Abstract (Abstrak) - max 200 words
+5. Keywords (Kata Kunci) - 3 to 5 words
+6. Introduction (Pendahuluan)
+7. Methods (Metode Penelitian)
+8. Results & Discussion (Hasil & Pembahasan)
+9. Conclusion (Kesimpulan)
+10. References (Daftar Pustaka) - APA Style

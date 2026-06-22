@@ -1,0 +1,223 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use App\Models\Karya;
+use Smalot\PdfParser\Parser;
+use Illuminate\Support\Facades\File;
+
+class KaryaController extends Controller
+{
+    /**
+     * Display a listing of works.
+     */
+    public function index()
+    {
+        $works = Karya::orderBy('created_at', 'desc')->get();
+        return view('welcome', compact('works'));
+    }
+
+    /**
+     * Display the specified work page.
+     */
+    public function show($id)
+    {
+        $work = Karya::findOrFail($id);
+        
+        // Format to match the previous structure
+        $formattedWork = [
+            'title' => $work->title,
+            'category' => $work->category,
+            'category_label' => $work->category === 'akademik' ? 'Akademik' : 'Kreatif',
+            'date' => $work->created_at->diffForHumans(),
+            'author' => $work->author,
+            'class' => $work->class,
+            'likes' => $work->likes,
+            'avatar' => strtoupper(substr($work->author, 0, 2)),
+            'excerpt' => $work->excerpt,
+            'content' => $work->content,
+            'pdf_path' => $work->pdf_path,
+        ];
+
+        return view('read', ['work' => $formattedWork, 'id' => $work->id]);
+    }
+
+    /**
+     * Store a newly created work in storage.
+     */
+    public function store(Request $request)
+    {
+        $request->validate([
+            'title' => 'required|string|max:255',
+            'author' => 'required|string|max:255',
+            'class' => 'required|string|max:10',
+            'category' => 'required|string|in:akademik,kreatif',
+            'excerpt' => 'required_without:pdf_file|string|nullable',
+            'pdf_file' => 'nullable|file|mimes:pdf|max:12288', // max 12MB
+        ]);
+
+        $pdfPath = null;
+        $extractedText = null;
+
+        if ($request->hasFile('pdf_file')) {
+            $file = $request->file('pdf_file');
+            $fileName = time() . '_' . str_replace(' ', '_', $file->getClientOriginalName());
+            
+            // Ensure uploads directory exists
+            $uploadPath = public_path('uploads');
+            if (!File::exists($uploadPath)) {
+                File::makeDirectory($uploadPath, 0755, true);
+            }
+            
+            $file->move($uploadPath, $fileName);
+            $pdfPath = '/uploads/' . $fileName;
+
+            // Parse PDF content using Smalot Parser
+            try {
+                $parser = new Parser();
+                $pdf = $parser->parseFile(public_path('uploads/' . $fileName));
+                $rawText = $pdf->getText();
+                $extractedText = $this->cleanAndFormatPdfText($rawText);
+            } catch (\Exception $e) {
+                $extractedText = '<p>Gagal mengurai dokumen PDF: ' . htmlspecialchars($e->getMessage()) . '</p>';
+            }
+        }
+
+        // Set default text contents
+        $content = $extractedText ?? '<p>' . htmlspecialchars($request->excerpt) . '</p>';
+        $excerpt = $request->excerpt ?? substr(strip_tags($content), 0, 180) . '...';
+
+        $karya = Karya::create([
+            'title' => $request->title,
+            'category' => $request->category,
+            'author' => $request->author,
+            'class' => $request->class,
+            'likes' => 0,
+            'excerpt' => $excerpt,
+            'content' => $content,
+            'pdf_path' => $pdfPath,
+        ]);
+
+        if ($request->expectsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => true,
+                'id' => $karya->id,
+                'title' => $karya->title,
+                'category' => $karya->category,
+                'category_label' => $karya->category === 'akademik' ? 'Akademik' : 'Kreatif',
+                'author' => $karya->author,
+                'class' => $karya->class,
+                'date' => 'Baru Saja',
+                'likes' => $karya->likes,
+                'avatar' => strtoupper(substr($karya->author, 0, 2)),
+                'excerpt' => $karya->excerpt,
+            ]);
+        }
+
+        return redirect('/')->with('success', 'Karya berhasil dikirim!');
+    }
+
+    /**
+     * Increment like counts in database (AJAX metric).
+     */
+    public function like($id)
+    {
+        $work = Karya::findOrFail($id);
+        $work->increment('likes');
+        
+        return response()->json([
+            'success' => true,
+            'likes' => $work->likes
+        ]);
+    }
+
+    /**
+     * Clean and format raw extracted PDF text into clean HTML paragraphs and headings.
+     */
+    private function cleanAndFormatPdfText($text)
+    {
+        if (empty(trim($text))) {
+            return '<p>Dokumen PDF ini berhasil diunggah tetapi tidak mengandung teks yang dapat dibaca mesin.</p>';
+        }
+
+        // 1. Normalize line breaks
+        $text = str_replace(["\r\n", "\r"], "\n", $text);
+        
+        // Remove common running headers/footers
+        $text = preg_replace('/Generated by Kimi\.ai/i', '', $text);
+        
+        // Clean corrupted characters like Unicode Replacement characters (e.g. \uFFFD)
+        // specifically for IC50: replace IC\uFFFD\uFFFD or IC\uFFFD with IC50
+        $text = str_replace(["IC\u{FFFD}\u{FFFD}", "IC\u{FFFD}"], 'IC50', $text);
+        $text = str_replace("\u{FFFD}-\u{FFFD}", '-', $text);
+        $text = str_replace("\u{FFFD}", '', $text); // Remove other isolated replacements
+
+        $lines = explode("\n", $text);
+        $paragraphs = [];
+        $currentParagraph = '';
+
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+            if ($trimmed === '') {
+                if ($currentParagraph !== '') {
+                    $paragraphs[] = $currentParagraph;
+                    $currentParagraph = '';
+                }
+                continue;
+            }
+
+            // Check if the line looks like a heading or section title
+            // Pattern matches: "1. Latar Belakang", "BAB I", "3.4 Hasil Molecular Docking", "5. KESIMPULAN", "DAFTAR PUSTAKA"
+            // or short capitalized lines without typical ending punctuation
+            $isHeading = preg_match('/^(?:[0-9]+\.[0-9]+|[0-9]+\.|\bBAB\s+[IVXLCDM]+\b|[A-Z\s]{4,})$/', $trimmed)
+                         || (strlen($trimmed) < 80 && !preg_match('/[.!?]$/', $trimmed) && preg_match('/^[A-Z0-9]/', $trimmed));
+
+            if ($isHeading) {
+                if ($currentParagraph !== '') {
+                    $paragraphs[] = $currentParagraph;
+                    $currentParagraph = '';
+                }
+                $paragraphs[] = '###HEADING###' . $trimmed;
+                continue;
+            }
+
+            // Append to current paragraph
+            if ($currentParagraph === '') {
+                $currentParagraph = $trimmed;
+            } else {
+                // Syllable hyphenation at line end (e.g. molec- and ular -> molecular)
+                if (str_ends_with($currentParagraph, '-')) {
+                    // Check if next word starts with lowercase (syllable wrap)
+                    if (preg_match('/^[a-z]/', $trimmed)) {
+                        $currentParagraph = substr($currentParagraph, 0, -1) . $trimmed;
+                    } else {
+                        // Keep hyphen (e.g., compound word split or chemical name like Quercetin-3-O-glucoside)
+                        $currentParagraph .= $trimmed;
+                    }
+                } else {
+                    $currentParagraph .= ' ' . $trimmed;
+                }
+            }
+        }
+
+        if ($currentParagraph !== '') {
+            $paragraphs[] = $currentParagraph;
+        }
+
+        // Convert parsed blocks to clean HTML
+        $html = '';
+        foreach ($paragraphs as $para) {
+            if (str_starts_with($para, '###HEADING###')) {
+                $headingText = substr($para, 13);
+                $html .= '<h3>' . htmlspecialchars($headingText) . '</h3>';
+            } else {
+                // Strip double spaces and wrap in paragraph tags
+                $cleanedPara = preg_replace('/\s+/', ' ', $para);
+                $html .= '<p>' . htmlspecialchars($cleanedPara) . '</p>';
+            }
+        }
+
+        return $html;
+    }
+}
