@@ -1,0 +1,30 @@
+databases:
+  - name: web-publisher-db
+    databaseName: web_publisher
+    user: db_user
+    plan: free
+
+services:
+  - type: web
+    name: web-publisher
+    runtime: docker
+    plan: free
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: DB_URL
+        fromDatabase:
+          name: web-publisher-db
+          property: connectionString
+      - key: AUTORUN_ENABLED
+        value: "true"
+      - key: AUTORUN_LARAVEL_MIGRATION
+        value: "true"
+      - key: LOG_CHANNEL
+        value: stderr
+      - key: APP_KEY
+        generate: true

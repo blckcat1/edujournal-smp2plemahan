@@ -1,0 +1,15 @@
+.git
+.github
+.env
+node_modules
+vendor
+public/build
+tests
+phpunit.xml
+.editorconfig
+.gitattributes
+.antigravityignore
+Dockerfile
+docker-compose.yml
+render.yaml
+vercel.json
